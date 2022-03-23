@@ -1,0 +1,804 @@
+#+TITLE:Emacs.org
+#+auto_tangle: t
+#+PROPERTY: header-args:emacs-lisp :tangle "init.el"
+
+* Early Init
+** Garbage collection
+#+begin_src emacs-lisp :tangle early-init.el
+  ;;; early-init.el -*- lexical-binding: t; -*-
+
+  ;; Increase the GC threshold for faster startup
+  ;; The default is 800 kilobytes.  Measured in bytes.
+  (setq gc-cons-threshold (* 50 1000 1000))
+
+  ;; Prefer loading newest compiled .el file
+  (setq load-prefer-newer noninteractive)
+
+  ;; Native compilation settings
+  (when (featurep 'native-compile)
+    ;; Silence compiler warnings as they can be pretty disruptive
+    (setq native-comp-async-report-warnings-errors nil)
+
+    ;; Make native compilation happens asynchronously
+    (setq native-comp-deferred-compilation t)
+
+    ;; Set the right directory to store the native compilation cache
+    (add-to-list 'native-comp-eln-load-path (expand-file-name "eln-cache/" user-emacs-directory)))
+
+  ;; Don't use package.el, we'll use straight.el instead
+  (setq package-enable-at-startup nil)
+
+  ;; Remove some unneeded UI elements (the user can turn back on anything they wish)
+  (setq inhibit-startup-message t)
+  (push '(tool-bar-lines . 0) default-frame-alist)
+  (push '(menu-bar-lines . 0) default-frame-alist)
+  (push '(vertical-scroll-bars) default-frame-alist)
+  (push '(mouse-color . "white") default-frame-alist)
+
+  ;; Loads a nice blue theme, avoids the white screen flash on startup.
+  (load-theme 'deeper-blue t)
+
+  ;; Make the initial buffer load faster by setting its mode to fundamental-mode
+  (setq initial-major-mode 'fundamental-mode)
+  ;; Find the user configuration path
+  ;; In order do these checks:
+  ;; * using chemacs?
+  ;; ** yes, and have specified a location with the RATIONAL_EMACS_HOME
+  ;;    environment variable
+  ;; ** yes, but no environment variable, assume the rational-emacs
+  ;;    folder in the profile
+  ;; * use RATIONAL_EMACS_HOME environment variable
+  ;; * XDG_CONFIG_HOME or the path .config/rational-emacs
+  ;;   exists. XDG_CONFIG_HOME usually defaults to $HOME/.config/, so
+  ;;   these are the same thing
+  ;; * use HOME environment variable
+  (defvar ck-config-path
+    (cond
+     ((featurep 'chemacs)
+      (if (getenv  "USER_ECONFIG_HOME")
+          (expand-file-name (getenv "USER_ECONFIG_HOME"))
+        (expand-file-name "ck-emacs" user-emacs-directory)))
+     ((getenv "USER_ECONFIG_HOME") (expand-file-name (getenv "USER_ECONFIG_HOME")))
+     ((or (getenv "XDG_CONFIG_HOME") (file-exists-p (expand-file-name ".config/ck-emacs" (getenv "HOME"))))
+      (if (getenv "XDG_CONFIG_HOME")
+          (expand-file-name "ck-emacs" (getenv "XDG_CONFIG_HOME"))
+        (expand-file-name ".config/ck-emacs" (getenv "HOME"))))
+     ((getenv "HOME") (expand-file-name ".ck-emacs" (getenv "HOME"))))
+    "The user's ck-emacs configuration path.")
+
+  ;; make sure the rational-config-path is on the load path so the user
+  ;; can load "custom.el" from there if desired.
+  (add-to-list 'load-path (expand-file-name ck-config-path))
+  (add-to-list 'load-path (expand-file-name "lisp" user-emacs-directory))
+
+  (unless (file-exists-p ck-config-path)
+    (mkdir ck-config-path t))
+
+#+end_src
+
+* Init
+** Startup time
+#+begin_src emacs-lisp
+;; Profile emacs startup
+(add-hook 'emacs-startup-hook
+          (lambda ()
+            (message "Ck Emacs loaded in %s."
+                     (emacs-init-time))))
+#+end_src
+** Some defaults
+#+begin_src emacs-lisp
+; Set default coding system (especially for Windows)
+(set-default-coding-systems 'utf-8)
+(customize-set-variable 'visible-bell 1)  ; turn off beeps, make them flash!
+(customize-set-variable 'large-file-warning-threshold 100000000) ;; change to ~100 MB
+#+end_src
+
+** Straight + Use-package
+#+begin_src emacs-lisp
+  ;; Initialize straight.el
+  (defvar bootstrap-version)
+  (let ((bootstrap-file
+         (expand-file-name "straight/repos/straight.el/bootstrap.el" user-emacs-directory))
+        (bootstrap-version 5))
+    (unless (file-exists-p bootstrap-file)
+      (with-current-buffer
+          (url-retrieve-synchronously
+           "https://raw.githubusercontent.com/raxod502/straight.el/develop/install.el"
+           'silent 'inhibit-cookies)
+        (goto-char (point-max))
+        (eval-print-last-sexp)))
+    (load bootstrap-file nil 'nomessage))
+
+  ;; Install use-package
+  (straight-use-package 'use-package)
+
+  ;; Configure use-package to use straight.el by default
+  (use-package straight
+    :custom (straight-use-package-by-default t))
+#+end_src
+
+** Set System
+#+begin_src emacs-lisp
+;; Check the system used
+(defconst ON-LINUX   (eq system-type 'gnu/linux))
+(defconst ON-MAC     (eq system-type 'darwin))
+(defconst ON-BSD     (or ON-MAC (eq system-type 'berkeley-unix)))
+(defconst ON-WINDOWS (memq system-type '(cygwin windows-nt ms-dos)))
+#+end_src
+** Setup local folders
+#+begin_src emacs-lisp
+  ;; Defines the user configuration var and etc folders
+  ;; and ensure they exist.
+  (defvar ck-config-etc-directory (expand-file-name "etc/" ck-config-path)
+    "The user's configuration etc/ folder.")
+  (defvar ck-config-var-directory (expand-file-name "var/" ck-config-path)
+    "The user's configuration var/ folder.")
+  (mkdir ck-config-etc-directory t)
+  (mkdir ck-config-var-directory t)
+#+end_src
+
+** Garbage collection
+#+begin_src emacs-lisp
+(setq gc-cons-threshold (* 2 1000 1000))
+#+end_src
+
+** Custom variables
+#+begin_src emacs-lisp
+;;(customize-set-variable 'custom-file
+;;                        (expand-file-name "custom.el" ck-config-path))
+#+end_src
+
+* Some Sane defaults
+#+begin_src emacs-lisp
+    ;; Revert Dired and other bufferso
+    (customize-set-variable 'global-auto-revert-non-file-buffers t)
+
+    ;; Revert buffers when the underlying file has changed
+    (global-auto-revert-mode 1)
+
+    ;; Highlight current line
+    (global-hl-line-mode 1)
+    (set-face-background hl-line-face "gray5")
+
+    ;; Use spaces instead of tabs
+    (setq-default indent-tabs-mode nil)
+
+    ;; Use "y" and "n" to confirm/negate prompt instead of "yes" and "no"
+    ;; Using `advice' here to make it easy to reverse in custom
+    ;; configurations with `(advice-remove 'yes-or-no-p #'y-or-n-p)'
+    ;;
+    ;; N.B. Emacs 28 has a variable for using short answers, which should
+    ;; be preferred if using that version or higher.
+    (if (boundp 'use-short-answers)
+        (setq use-short-answers t)
+      (advice-add 'yes-or-no-p :override #'y-or-n-p))
+
+    ;; Turn on recentf mode
+    (add-hook 'after-init-hook #'recentf-mode)
+    (setq recentf-save-file (expand-file-name "recentf" ck-config-var-directory))
+
+    ;; Do not saves duplicates in kill-ring
+    (customize-set-variable 'kill-do-not-save-duplicates t)
+
+    ;; Make scrolling less stuttered
+    (setq auto-window-vscroll nil)
+    (customize-set-variable 'fast-but-imprecise-scrolling t)
+    (customize-set-variable 'scroll-conservatively 101)
+    (customize-set-variable 'scroll-margin 0)
+    (customize-set-variable 'scroll-preserve-screen-position t)
+
+    ;; Better support for files with long lines
+    (setq-default bidi-paragraph-direction 'left-to-right)
+    (setq-default bidi-inhibit-bpa t)
+    (global-so-long-mode 1)
+
+    ;; Make shebang (#!) file executable when saved
+    (add-hook 'after-save-hook 'executable-make-buffer-file-executable-if-script-p)
+
+    ;; Enable savehist-mode for an command history
+  (savehist-mode 1)
+
+  ;; Force revert buffer
+  (global-set-key (kbd "<f5>") 'revert-buffer)
+#+end_src
+#+begin_src emacs-lisp
+#+end_src
+* Visual / UI
+** Install Icons
+#+begin_src emacs-lisp
+(use-package all-the-icons)
+;; (straight-use-package '(all-the-icons
+;; 			:post-build ((when ON-WINDOWS
+;; 				       (warn
+;; 					"%s"
+;; 					"Read the documentation for `all-the-icons'; on Windows, `all-the-icons-install-fonts' only downloads fonts, they must be installed manually. This is necessary if icons are not displaying properly.")))))
+#+end_src
+** Themes
+#+begin_src emacs-lisp
+(use-package doom-themes)
+;;(load-theme 'doom-snazzy t)
+(load-theme 'doom-palenight t)
+#+end_src
+** Mode line
+#+begin_src emacs-lisp
+;; (use-package doom-modeline)
+;; ;; Start up the modeline after initialization is finished
+;; (add-hook 'after-init-hook #'doom-modeline-init)
+(use-package doom-modeline
+  :ensure t
+  :init (doom-modeline-mode 1))
+;; Configure `doom-modeline'
+(customize-set-variable 'doom-modeline-height 15)
+(customize-set-variable 'doom-modeline-bar-width 6)
+(customize-set-variable 'doom-modeline-minor-modes t)
+(customize-set-variable 'doom-modeline-buffer-file-name-style 'truncate-except-project)
+
+#+end_src
+** Help Buffer are more helpful
+#+begin_src emacs-lisp
+;;;; Help Buffers
+
+(use-package helpful)
+;; Make `describe-*' screens more helpful
+(require 'helpful)
+(define-key helpful-mode-map [remap revert-buffer] #'helpful-update)
+(global-set-key [remap describe-command] #'helpful-command)
+(global-set-key [remap describe-function] #'helpful-callable)
+(global-set-key [remap describe-key] #'helpful-key)
+(global-set-key [remap describe-symbol] #'helpful-symbol)
+(global-set-key [remap describe-variable] #'helpful-variable)
+(global-set-key (kbd "C-h F") #'helpful-function)
+
+;; Bind extra `describe-*' commands
+(global-set-key (kbd "C-h K") #'describe-keymap)
+
+#+end_src
+** Line number
+#+begin_src emacs-lisp
+(add-hook 'prog-mode-hook 'menu-bar--display-line-numbers-mode-relative)
+;;;; Line Numbers
+
+(defcustom rational-ui-line-numbers-enabled-modes
+  '(conf-mode prog-mode)
+  "Modes which should display line numbers."
+  :type 'list
+  :group 'rational)
+
+(defcustom rational-ui-line-numbers-disabled-modes
+  '(org-mode)
+  "Modes which should not display line numbers.
+Modes derived from the modes defined in
+`rational-ui-line-number-enabled-modes', but should not display line numbers."
+  :type 'list
+  :group 'rational)
+
+(defun rational-ui--enable-line-numbers-mode ()
+  "Turn on line numbers mode.
+
+Used as hook for modes which should display line numbers."
+  (display-line-numbers-mode 1))
+
+(defun rational-ui--disable-line-numbers-mode ()
+  "Turn off line numbers mode.
+
+Used as hook for modes which should not display line numebrs."
+  (display-line-numbers-mode -1))
+
+(defun rational-ui--update-line-numbers-display ()
+  "Update configuration for line numbers display."
+  (if rational-ui-display-line-numbers
+      (progn
+        (dolist (mode rational-ui-line-numbers-enabled-modes)
+          (add-hook (intern (format "%s-hook" mode))
+                    #'rational-ui--enable-line-numbers-mode))
+        (dolist (mode rational-ui-line-numbers-disabled-modes)
+          (add-hook (intern (format "%s-hook" mode))
+                    #'rational-ui--disable-line-numbers-mode))
+        (setq-default
+         display-line-numbers-grow-only t
+         display-line-numbers-type t
+         display-line-numbers-width 2))
+     (progn
+       (dolist (mode rational-ui-line-numbers-enabled-modes)
+         (remove-hook (intern (format "%s-hook" mode))
+                      #'rational-ui--enable-line-numbers-mode))
+       (dolist (mode rational-ui-line-numbers-disabled-modes)
+         (remove-hook (intern (format "%s-hook" mode))
+                      #'rational-ui--disable-line-numbers-mode)))))
+
+(defcustom rational-ui-display-line-numbers nil
+  "Whether line numbers should be enabled."
+  :type 'boolean
+  :group 'rational
+  :set (lambda (sym val)
+         (set-default sym val)
+         (rational-ui--update-line-numbers-display)))
+
+#+end_src
+
+** Elisp demos
+#+begin_src emacs-lisp
+;;;; Elisp-Demos
+
+(use-package elisp-demos)
+;; also add some examples
+(require 'elisp-demos)
+(advice-add 'helpful-update :after #'elisp-demos-advice-helpful-update)
+#+end_src
+** Pulse current line
+*** Native method
+#+begin_src emacs-lisp
+;; add visual pulse when changing focus, like beacon but built-in
+;; from from https://karthinks.com/software/batteries-included-with-emacs/
+(defun pulse-line (&rest _)
+  "Pulse the current line."
+  (pulse-momentary-highlight-one-line (point)))
+
+(dolist (command '(scroll-up-command scroll-down-command
+				                     recenter-top-bottom other-window))
+  (advice-add command :after #'pulse-line))
+#+end_src>
+*** Pulsar
+#+begin_src emacs-lisp
+;; Setup Pulsar
+(straight-use-package '(pulsar
+                       :type git :host gitlab :repo "protesilaos/pulsar"))
+(pulsar-setup)
+
+(customize-set-variable
+ 'pulsar-pulse-functions ; Read the doc string for why not `setq'
+ '(recenter-top-bottom
+   move-to-window-line-top-bottom
+   reposition-window
+   bookmark-jump
+   other-window
+   delete-window
+   delete-other-windows
+   forward-page
+   backward-page
+   scroll-up-command
+   scroll-down-command
+   evil-window-right
+   evil-window-left
+   evil-window-up
+   evil-window-down
+   evil-window-next
+   evil-window-prev
+   windmove-right
+   windmove-left
+   windmove-up
+   windmove-down
+   windmove-swap-states-right
+   windmove-swap-states-left
+   windmove-swap-states-up
+   windmove-swap-states-down
+   tab-new
+   tab-close
+   tab-next
+   org-next-visible-heading
+   org-previous-visible-heading
+   org-forward-heading-same-level
+   org-backward-heading-same-level
+   outline-backward-same-level
+   outline-forward-same-level
+   outline-next-visible-heading
+   outline-previous-visible-heading
+   outline-up-heading))
+
+(setq pulsar-pulse t)
+(setq pulsar-delay 0.055)
+(setq pulsar-iterations 10)
+(setq pulsar-face 'pulsar-magenta)
+(setq pulsar-highlight-face 'pulsar-yellow)
+
+;; pulsar does not define any key bindings.  This is just a sample that
+;; respects the key binding conventions.  Evaluate:
+;;
+;;     (info "(elisp) Key Binding Conventions")
+;;
+;; The author uses C-x l for `pulsar-pulse-line' and C-x L for
+;; `pulsar-highlight-line'.
+(let ((map global-map))
+  (define-key map (kbd "C-c h p") #'pulsar-pulse-line)
+  (define-key map (kbd "C-c h h") #'pulsar-highlight-linei))
+#+end_src
+
+** Treemacs
+#+begin_src emacs-lisp
+  (use-package treemacs)
+  (use-package treemacs-all-the-icons)
+  (use-package treemacs-evil
+    :after (treemacs evil)
+    :ensure t)
+
+  ;; (use-package treemacs-projectile
+  ;;   :after (treemacs projectile)
+  ;;   :ensure t)
+
+  (use-package treemacs-icons-dired
+    :hook (dired-mode . treemacs-icons-dired-enable-once)
+    :ensure t)
+
+  (use-package treemacs-magit
+    :after (treemacs magit)
+    :ensure t)
+
+  ;; (use-package treemacs-persp ;;treemacs-perspective if you use perspective.el vs. persp-mode
+  ;;   :after (treemacs persp-mode) ;;or perspective vs. persp-mode
+  ;;   :ensure t
+  ;;   :config (treemacs-set-scope-type 'Perspectives))
+
+  (use-package treemacs-tab-bar ;;treemacs-tab-bar if you use tab-bar-mode
+    :after (treemacs)
+    :ensure t
+    :config (treemacs-set-scope-type 'Tabs))
+#+end_src
+** Indent Guides
+#+begin_src emacs-lisp
+; Indentation Guide
+(use-package highlight-indent-guides
+  :hook (prog-mode . highlight-indent-guides-mode)
+  :custom
+  (highlight-indent-guides-method 'character)
+  (highlight-indent-guides-responsive 'top)
+  (highlight-indent-guides-responsive 0)
+  )
+#+end_src
+* Editing
+** Manage whitespaces
+#+begin_src emacs-lisp
+(use-package ws-butler)
+;; Set up ws-butler for trimming whitespace and line endings
+(add-hook 'text-mode-hook 'ws-butler-mode)
+(add-hook 'prog-mode-hook 'ws-butler-mode)
+#+end_src
+** eVIl Nerd Commenter
+#+begin_src emacs-lisp :tangle no
+(use-package evil-nerd-commenter)
+;; Set a global binding for better line commenting/uncommenting
+(global-set-key (kbd "M-/") 'evilnc-comment-or-uncomment-lines)
+#+end_src
+** Hungry delete useful in non-eVIL mode
+#+begin_src emacs-lisp
+(use-package hungry-delete)
+;; Delete all white spaces with single delete
+(global-hungry-delete-mode)
+#+end_src
+** Parenthesis
+#+begin_src emacs-lisp
+
+(electric-pair-mode 1) ; auto-insert matching bracket
+(show-paren-mode 1)    ; turn on paren match highlighting
+
+#+end_src
+** Aggressive indent
+   #+begin_src emacs-lisp
+  (use-package aggressive-indent
+    :defer t
+    :hook (emacs-lisp-mode . aggressive-indent-mode))
+
+   #+end_src
+** kill-ring
+   #+begin_src emacs-lisp
+          (use-package browse-kill-ring
+            :bind (("M-y" . browse-kill-ring))
+            :custom
+            (browse-kill-ring-highlight-inserted-item t)
+            (browse-kill-ring-separator ""))
+
+   #+end_src
+* eVIl
+  #+begin_src emacs-lisp
+    ;; Define configuration variables
+    (defcustom rational-evil-discourage-arrow-keys nil
+      "When t, prevent the use of arrow keys in normal state to
+    encourage the use of Vim-style movement keys (hjkl).")
+
+    ;; Install dependencies
+    (straight-use-package 'evil)
+    (straight-use-package 'undo-tree)
+    (straight-use-package 'evil-collection)
+    (straight-use-package 'treemacs-evil)
+
+    ;; Turn on undo-tree globally
+    (global-undo-tree-mode)
+
+    ;; Set some variables that must be configured before loading the package
+    (customize-set-variable 'evil-want-integration t)
+    (customize-set-variable 'evil-want-keybinding nil)
+    (customize-set-variable 'evil-want-C-u-scroll t)
+    (customize-set-variable 'evil-want-C-i-jump nil)
+    (customize-set-variable 'evil-respect-visual-line-mode t)
+    (customize-set-variable 'evil-undo-system 'undo-tree)
+
+    ;; Load Evil and enable it globally
+    (require 'evil)
+    (evil-mode 1)
+
+    ;; Make C-g revert to normal state
+    (define-key evil-insert-state-map (kbd "C-g") 'evil-normal-state)
+
+    ;; Rebind `universal-argument' to 'C-M-u' since 'C-u' now scrolls the buffer
+    (global-set-key (kbd "C-M-u") 'universal-argument)
+
+    ;; C-h is backspace in insert state
+    (define-key evil-insert-state-map (kbd "C-h") 'evil-delete-backward-char-and-join)
+
+    ;; Use visual line motions even outside of visual-line-mode buffers
+    (evil-global-set-key 'motion "j" 'evil-next-visual-line)
+    (evil-global-set-key 'motion "k" 'evil-previous-visual-line)
+
+    (defun rational-evil/discourage-arrow-keys ()
+      (interactive)
+      (message "Use HJKL keys instead!"))
+
+    (when rational-evil-discourage-arrow-keys
+      ;; Disable arrow keys in normal and visual modes
+      (define-key evil-normal-state-map (kbd "<left>") 'rational-evil/discourage-arrow-keys)
+      (define-key evil-normal-state-map (kbd "<right>") 'rational-evil/discourage-arrow-keys)
+      (define-key evil-normal-state-map (kbd "<down>") 'rational-evil/discourage-arrow-keys)
+      (define-key evil-normal-state-map (kbd "<up>") 'rational-evil/discourage-arrow-keys)
+      (evil-global-set-key 'motion (kbd "<left>") 'rational-evil/discourage-arrow-keys)
+      (evil-global-set-key 'motion (kbd "<right>") 'rational-evil/discourage-arrow-keys)
+      (evil-global-set-key 'motion (kbd "<down>") 'rational-evil/discourage-arrow-keys)
+      (evil-global-set-key 'motion (kbd "<up>") 'rational-evil/discourage-arrow-keys))
+
+    ;; Make sure some modes start in Emacs state
+    ;; TODO: Split this out to other configuration modules?
+    (dolist (mode '(custom-mode
+                    eshell-mode
+                    term-mode))
+      (add-to-list 'evil-emacs-state-modes mode))
+
+    (evil-collection-init)
+
+  #+end_src
+* Completion
+  #+begin_src emacs-lisp
+(straight-use-package 'vertico)
+(straight-use-package 'consult)
+(straight-use-package 'orderless)
+(straight-use-package 'marginalia)
+(straight-use-package 'embark)
+
+(defun rational-completion/minibuffer-backward-kill (arg)
+  "When minibuffer is completing a file name delete up to parent
+folder, otherwise delete a word"
+  (interactive "p")
+  (if minibuffer-completing-file-name
+      ;; Borrowed from https://github.com/raxod502/selectrum/issues/498#issuecomment-803283608
+      (if (string-match-p "/." (minibuffer-contents))
+          (zap-up-to-char (- arg) ?/)
+        (delete-minibuffer-contents))
+    (backward-kill-word arg)))
+
+;;;; Vertico
+
+(require 'vertico)
+(require 'vertico-directory "extensions/vertico-directory.el")
+
+(with-eval-after-load 'evil
+  (define-key vertico-map (kbd "C-j") 'vertico-next)
+  (define-key vertico-map (kbd "C-k") 'vertico-previous)
+  (define-key vertico-map (kbd "M-h") 'vertico-directory-up))
+
+;; Cycle back to top/bottom result when the edge is reached
+(customize-set-variable 'vertico-cycle t)
+
+;; Start Vertico
+(vertico-mode 1)
+
+;;;; Marginalia
+
+;; Configure Marginalia
+(require 'marginalia)
+(setq marginalia-annotators '(marginalia-annotators-heavy marginalia-annotators-light nil))
+(marginalia-mode 1)
+
+;; Set some consult bindings
+(global-set-key (kbd "C-s") 'consult-line)
+(define-key minibuffer-local-map (kbd "C-r") 'consult-history)
+
+(setq completion-in-region-function #'consult-completion-in-region)
+
+;;;; Orderless
+
+;; Set up Orderless for better fuzzy matching
+(require 'orderless)
+(customize-set-variable 'completion-styles '(orderless))
+(customize-set-variable 'completion-category-overrides '((file (styles . (partial-completion)))))
+(setq completion-category-defaults nil)
+
+;;;; Embark
+
+(global-set-key [remap describe-bindings] #'embark-bindings)
+(global-set-key (kbd "C-.") 'embark-act)
+
+;; Use Embark to show bindings in a key prefix with `C-h`
+(setq prefix-help-command #'embark-prefix-help-command)
+
+  #+end_src
+* Windows
+** Winner/Windmove
+#+begin_src emacs-lisp
+      (defcustom rational-windows-evil-style nil
+        "When t, window movement bindings will be evil-style.")
+
+      (defcustom rational-windows-prefix-key "C-c w"
+        "Configure the prefix key for `rational-windows' bindings.")
+
+      (winner-mode 1)
+
+      (define-prefix-command 'rational-windows-key-map)
+
+      (define-key 'rational-windows-key-map (kbd "u") 'winner-undo)
+      (define-key 'rational-windows-key-map (kbd "n") 'windmove-down)
+      (define-key 'rational-windows-key-map (kbd "p") 'windmove-up)
+      (define-key 'rational-windows-key-map (kbd "b") 'windmove-left)
+      (define-key 'rational-windows-key-map (kbd "f") 'windmove-right)
+
+      (global-set-key (kbd rational-windows-prefix-key) 'rational-windows-key-map)
+
+    ;; Ace window
+  (use-package ace-window
+    :bind (("M-o" . ace-window)))
+#+end_src
+** Dimmer
+#+begin_src emacs-lisp
+  ;; Dimmer - Dim other windows
+  (straight-use-package 'dimmer)
+  ;; Fix below settings
+  (setq dimmer-adjustment-mode :both)
+  (setq dimmer-fraction 0.2)
+
+  ;;(dimmer-configure-which-key)
+  ;;(dimmer-configure-helm)
+  (dimmer-mode t)
+#+end_src
+* Org Mode
+** Templates
+You can also use an old Easy Template system, which is disabled by default in Org mode 9.2 and upper. One can turn it back by enabling org-tempo module either by adding it to org-modules variable or by (require 'org-tempo).
+#+begin_src emacs-lisp
+  ;; Easy Template insertion
+  (require 'org-tempo)
+  ;;(with-eval-after-load 'org-tempo
+  ;;(add-to-list 'org-structure-template-alist '(("hs" . "src haskell")("el" . "src emacs-lisp")))
+  ;;(add-to-list 'org-structure-template-alist '("el" . "src emacs-lisp")))
+
+  (setq org-structure-template-alist
+  '(("a" . "export ascii\n")
+    ("c" . "center\n")
+    ("C" . "comment\n")
+    ("e" . "example\n")
+    ("el" . "src emacs-lisp")
+    ("E" . "export")
+    ("h" . "export html\n")
+    ("l" . "export latex\n")
+    ("q" . "quote\n")
+    ("s" . "src")
+    ("v" . "verse\n")))
+#+end_src
+** Auto Tangle
+#+begin_src emacs-lisp
+  ;; Automatically Tangle files
+  (use-package org-auto-tangle
+    :defer t
+    :hook (org-mode . org-auto-tangle-mode))
+#+end_src
+** GTD
+* Languages
+
+** VIVA
+
+** NESS/SPEC
+
+* Tramp
+  #+begin_src emacs-lisp
+    (customize-set-variable 'tramp-default-method "ssh")
+  #+end_src
+
+
+* Shell
+
+** Eshell
+
+*** Jumping Directories in Eshell
+    https://karthinks.com/software/jumping-directories-in-eshell/
+    #+begin_src emacs-lisp
+      (use-package consult-dir
+        :ensure t
+        :bind (("C-x C-d" . consult-dir)
+               :map minibuffer-local-completion-map
+               ("C-x C-d" . consult-dir)
+               ("C-x C-j" . consult-dir-jump-file)))
+
+      (defun eshell/z (&optional regexp)
+        "Navigate to a previously visited directory in eshell, or to
+      any directory proferred by `consult-dir'."
+        (let ((eshell-dirs (delete-dups
+                            (mapcar 'abbreviate-file-name
+                                    (ring-elements eshell-last-dir-ring)))))
+          (cond
+           ((and (not regexp) (featurep 'consult-dir))
+            (let* ((consult-dir--source-eshell `(:name "Eshell"
+                                                   :narrow ?e
+                                                   :category file
+                                                   :face consult-file
+                                                   :items ,eshell-dirs))
+                     (consult-dir-sources (cons consult-dir--source-eshell
+                                                consult-dir-sources)))
+              (eshell/cd (substring-no-properties
+                          (consult-dir--pick "Switch directory: ")))))
+           (t (eshell/cd (if regexp (eshell-find-previous-directory regexp)
+                           (completing-read "cd: " eshell-dirs)))))))
+    #+end_src
+
+*** Load Bash Alias
+    https://www.emacswiki.org/emacs/EshellAlias
+    #+begin_src emacs-lisp
+      (add-hook 'eshell-mode-hook 'eshell-load-bashrc-aliases)
+      (defun re-n-matches ()
+        (1- (/ (length (match-data)) 2)))
+
+      ;; from xah-lee http://ergoemacs.org/emacs/elisp_read_file_content.html
+      (defun get-string-from-file (filePath)
+        "Return filePath's file content."
+        (with-temp-buffer
+        (insert-file-contents filePath)
+        (buffer-string)))
+
+      (defun match-strings-all (&optional string)
+        "Return the list of all expressions matched in last search.
+        STRING is optionally what was given to `string-match'."
+        (loop for i from 0 to (re-n-matches)
+          collect (match-string-no-properties i string)))
+
+      (defun re-find-all (regexp string &optional groups yes-props)
+        "like python's re.find_all"
+        (let (
+          ;;(groups (or groups (list (regexp-count-capture-groups regexp))))
+          (match-string-fun (if (not yes-props) 'match-string 'match-string-no-properties))
+          (start 0)
+          (matches nil )
+          )
+          (while (setq start (and (string-match regexp string start) (match-end 0)))
+          (setq matches (cons (cdr (match-strings-all string)) matches))
+          )
+          (setq matches (reverse matches))
+          (if (not (cdar matches))
+          (mapcar 'car matches)
+            matches
+            )
+          )
+        )
+
+
+      (defun apply-eshell-alias (alias &rest definition)
+        "basically taken from eshell/alias function"
+          (if (not definition)
+              (setq eshell-command-aliases-list
+                (delq (assoc alias eshell-command-aliases-list)
+                      eshell-command-aliases-list))
+            (and (stringp definition)
+             (set-text-properties 0 (length definition) nil definition))
+            (let ((def (assoc alias eshell-command-aliases-list))
+              (alias-def (list alias
+                               (eshell-flatten-and-stringify definition))))
+          (if def
+              (setq eshell-command-aliases-list
+                    (delq def eshell-command-aliases-list)))
+          (setq eshell-command-aliases-list
+                (cons alias-def eshell-command-aliases-list))))
+        )
+      (defun eshell-load-bashrc-aliases ()
+        (interactive)
+        (mapc (lambda (alias-def) (apply 'eshell/alias alias-def))
+          (re-find-all "^alias \\([^=]+\\)='?\\(.+?\\)'?$"
+                       (get-string-from-file  (concat (getenv "HOME") "/" ".bash_aliases"))
+                       )
+          )
+        )
+
+    #+end_src
+
+* Mail
